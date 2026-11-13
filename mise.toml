@@ -1,0 +1,56 @@
+# Toolchain and tasks for this repository.
+#   mise install        install the pinned Node.js and pnpm
+#   mise run setup      install dependencies and the Playwright browser
+#   mise tasks          list all tasks
+# Keep the pnpm version in sync with "packageManager" in package.json.
+
+[tools]
+node = "24.22.1"
+pnpm = "12.15.0"
+
+[tasks.setup]
+description = "Install dependencies and the Chromium build used by the tests"
+run = ["pnpm install --frozen-lockfile", "pnpm exec playwright install chromium"]
+
+[tasks.dev]
+description = "Start the demo site with hot reload"
+run = "pnpm run dev"
+
+[tasks.format]
+description = "Format all files with Prettier"
+run = "pnpm run format"
+
+[tasks.lint]
+description = "Check formatting and lint"
+run = "pnpm run lint"
+
+[tasks.check]
+description = "Type-check TypeScript and Svelte"
+run = "pnpm run check"
+
+[tasks.test]
+description = "Run unit tests (Node) and component tests (Chromium)"
+run = "pnpm exec vitest run"
+
+[tasks."test:watch"]
+description = "Run unit and component tests in watch mode"
+run = "pnpm exec vitest"
+
+[tasks."test:e2e"]
+description = "Build the demo site and run the end-to-end tests"
+run = "pnpm exec playwright test"
+
+[tasks.build]
+description = "Build the demo site and the package (dist/)"
+run = "pnpm run build"
+
+[tasks.ci]
+description = "Everything CI should run, in order"
+depends = ["setup"]
+run = [
+  "pnpm run lint",
+  "pnpm run check",
+  "pnpm exec vitest run",
+  "pnpm run build",
+  "pnpm exec playwright test",
+]
