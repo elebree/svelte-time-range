@@ -1310,7 +1310,8 @@
 	.trs {
 		/* Public theme variables (all optional): --trs-accent, --trs-accent-contrast, --trs-text,
 		   --trs-muted, --trs-border, --trs-surface, --trs-track-background, --trs-selection,
-		   --trs-tick, --trs-now, --trs-height, --trs-radius, --trs-font-size.
+		   --trs-tick, --trs-now, --trs-chart, --trs-chart-muted, --trs-height, --trs-radius,
+		   --trs-font-size.
 		   Defaults follow the page's color-scheme. */
 		--_accent: var(--trs-accent, light-dark(#2563eb, #60a5fa));
 		--_accent-contrast: var(--trs-accent-contrast, light-dark(#ffffff, #0b1220));

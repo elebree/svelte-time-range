@@ -1,0 +1,87 @@
+name: Publish package
+
+# Publishing a GitHub release (tag v1.2.3, matching "version" in package.json) publishes
+# the package to npmjs.com and to GitHub Packages. A pre-release goes to the "next" dist-tag.
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  # Tests, builds and packs with no publishing rights
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check that the tag matches package.json
+        run: |
+          version=$(node -p "require('./package.json').version")
+          if [ "${GITHUB_REF_NAME#v}" != "$version" ]; then
+            echo "::error::Release tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@v6
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm lint
+      - run: pnpm check
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm exec vitest run
+      # prepack builds dist/ and runs publint
+      - run: pnpm pack --pack-destination packages/npm
+      # GitHub Packages only accepts packages scoped to the repository owner
+      - name: Pack for GitHub Packages
+        run: |
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          npm pkg set name="@$owner/$(node -p "require('./package.json').name")"
+          npm pkg set repository.url="git+https://github.com/$GITHUB_REPOSITORY.git"
+          pnpm pack --pack-destination packages/github
+      - uses: actions/upload-artifact@v7
+        with:
+          name: packages
+          path: packages/
+          if-no-files-found: error
+
+  # Publishes the tarballs the build job made; runs no project or dependency code
+  npm:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: npm
+      url: https://www.npmjs.com/package/svelte-time-range
+    permissions:
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+      - run: npm publish npm/*.tgz --provenance --access public --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
+        env:
+          # Only needed until trusted publishing is set up on npmjs.com (see README)
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  github:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      packages: write
+    steps:
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          registry-url: https://npm.pkg.github.com
+      - uses: actions/download-artifact@v8
+        with:
+          name: packages
+      - run: npm publish github/*.tgz --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

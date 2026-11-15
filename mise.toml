@@ -54,3 +54,7 @@ run = [
   "pnpm run build",
   "pnpm exec playwright test",
 ]
+
+[tasks."test:coverage"]
+description = "Run unit and component tests with coverage (coverage/index.html)"
+run = "pnpm run test:coverage"

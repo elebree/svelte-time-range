@@ -1,14 +1,29 @@
 {
-	"name": "time-range-slider",
+	"name": "svelte-time-range",
 	"version": "0.1.0",
-	"description": "A zoomable, time-zone aware time range slider for Svelte 5",
+	"description": "A zoomable, time-zone aware time range slider for Svelte 5 with presets, snapping and an optional chart",
+	"author": "elebree",
+	"license": "MIT",
+	"homepage": "https://elebree.github.io/svelte-time-range/",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/elebree/svelte-time-range.git"
+	},
+	"bugs": {
+		"url": "https://github.com/elebree/svelte-time-range/issues"
+	},
 	"keywords": [
 		"svelte",
 		"svelte5",
+		"sveltekit",
+		"svelte-component",
 		"time-range",
 		"date-range",
+		"range-slider",
 		"timeline",
-		"slider"
+		"time-picker",
+		"time-zone",
+		"histogram"
 	],
 	"type": "module",
 	"packageManager": "pnpm@12.15.0",
@@ -45,7 +60,8 @@
 		"format": "prettier --write .",
 		"test": "vitest run && playwright test",
 		"test:unit": "vitest",
-		"test:e2e": "playwright test"
+		"test:e2e": "playwright test",
+		"test:coverage": "vitest run --coverage"
 	},
 	"peerDependencies": {
 		"svelte": "^5.0.0"
@@ -53,12 +69,13 @@
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
 		"@playwright/test": "^1.60.0",
-		"@sveltejs/adapter-auto": "^8.0.0",
+		"@sveltejs/adapter-static": "^4.0.1",
 		"@sveltejs/kit": "^3.0.0",
 		"@sveltejs/package": "^2.5.8",
 		"@sveltejs/vite-plugin-svelte": "^7.2.0",
 		"@types/node": "^24",
 		"@vitest/browser-playwright": "^4.1.8",
+		"@vitest/coverage-v8": "4.1.12",
 		"eslint": "^10.4.1",
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.19.0",

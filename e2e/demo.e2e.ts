@@ -72,6 +72,18 @@ test('dragging into the edge scrolls the timeline', async ({ page }) => {
 	await expect(page.getByTestId('log').locator('li')).toHaveCount(1);
 });
 
+test('the map shows only the incidents inside the range', async ({ page }) => {
+	const count = async () =>
+		Number((await page.locator('.count').textContent())!.replace(/\D/g, ''));
+	const dots = page.locator('.dots circle');
+	const month = await count();
+	expect(month).toBeGreaterThan(0);
+	await expect(dots).toHaveCount(month);
+	await main(page).getByRole('button', { name: 'Year', exact: true }).click();
+	await expect.poll(count).toBeGreaterThan(month * 6);
+	await expect(dots).toHaveCount(await count());
+});
+
 test('wheel zooms around the pointer', async ({ page }) => {
 	const track = main(page).locator('.trs-track');
 	await expect(track.locator('.trs-axis-label', { hasText: /^May$/ })).toBeVisible();
