@@ -64,9 +64,9 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: packages
-      - run: npm publish npm/*.tgz --provenance --access public --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
+      - run: npm publish ./npm/*.tgz --provenance --access public --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
         env:
-          # Only needed until trusted publishing is set up on npmjs.com (see README)
+          # Only needed until trusted publishing is set up on npmjs.com
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
   github:
@@ -82,6 +82,6 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: packages
-      - run: npm publish github/*.tgz --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
+      - run: npm publish ./github/*.tgz --tag ${{ github.event.release.prerelease && 'next' || 'latest' }}
         env:
           NODE_AUTH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
