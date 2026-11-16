@@ -3,7 +3,7 @@
 	Internal: draws the ticks and labels of the timeline. Purely presentational.
 -->
 <script lang="ts">
-	import { estimateTextWidth, type Axis } from './core/ticks.js';
+	import { estimateTextWidth, type Axis, type Tick } from './core/ticks.js';
 	import { clamp, xAt, type ViewWindow } from './core/viewport.js';
 
 	interface Props {
@@ -71,14 +71,23 @@
 		selected: boolean;
 	}
 
-	/** Labels on their ticks: only those fully in view, skipping any that overlap a neighbour. */
+	/**
+	 * Labels on their ticks: only those fully in view, skipping any that overlap a neighbour.
+	 * A date at midnight wins over the hour before it.
+	 */
 	function labelsOnTicks(): Label[] {
 		const labels: Label[] = [];
 		let lastRight = -Infinity;
 		for (const point of points) {
 			const half = estimateTextWidth(point.label, fontSize) / 2;
 			if (point.x - half < EDGE_PADDING || point.x + half > width - EDGE_PADDING) continue;
-			if (point.x - half < lastRight + MIN_LABEL_GAP) continue;
+			if (point.x - half < lastRight + MIN_LABEL_GAP) {
+				if (!point.emphasis || labels.at(-1)?.emphasis !== false) continue;
+				labels.pop();
+				const before = labels.at(-1);
+				lastRight = before ? before.x + estimateTextWidth(before.text, fontSize) / 2 : -Infinity;
+				if (point.x - half < lastRight + MIN_LABEL_GAP) continue;
+			}
 			labels.push({
 				key: point.time,
 				x: point.x,
@@ -108,8 +117,10 @@
 
 	/**
 	 * Labels centered on their period (between a tick and the next one), clamped to the visible
-	 * part of the period and hidden once that part is too small. If the compact labels ("2025",
-	 * "Feb") do not fit every period, all periods use narrow ones ("J", "F") for a uniform look.
+	 * part of the period and hidden once that part is too small. Fallbacks apply to all periods
+	 * alike, for a uniform look: if a label ("Sept", "juil.") does not fit its period, all use
+	 * trimmed ones ("Sep", "juil"; a January keeps "2025" where it fits); if even those do not
+	 * fit everywhere, all use narrow ones ("J", "F").
 	 *
 	 * Each period with enough room also gets a quiet bracket showing its extent, interrupted by
 	 * the label: `└── Nov 1 ──┘`. Where the period runs past the edge of the view, its bracket
@@ -124,9 +135,10 @@
 			// The whole period lies within the highlighted range.
 			selected: highlightStart <= point.time && points[i + 1]!.time <= highlightEnd
 		}));
-		const narrow = periods.some(
-			({ point, room }) => labelWidth(point.compactLabel ?? point.label, point.emphasis) > room
-		);
+		const fitsEverywhere = (pick: (point: Tick) => string) =>
+			periods.every(({ point, room }) => labelWidth(pick(point), point.emphasis) <= room);
+		const narrow = !fitsEverywhere((p) => p.shortLabel ?? p.compactLabel ?? p.label);
+		const trimmed = !narrow && !fitsEverywhere((p) => p.compactLabel ?? p.label);
 		const labels: Label[] = [];
 		let brackets = '';
 		/** Brackets of periods within the highlighted range, drawn in the accent. */
@@ -137,8 +149,12 @@
 			if (end <= 0 || start >= width) continue;
 			const candidates = narrow
 				? [point.narrowLabel ?? point.compactLabel ?? point.label]
-				: [point.label, point.compactLabel ?? point.label];
-			let text = candidates.find((candidate) => labelWidth(candidate, point.emphasis) <= room);
+				: trimmed
+					? [point.compactLabel, point.shortLabel ?? point.compactLabel ?? point.label]
+					: [point.label, point.compactLabel ?? point.label];
+			let text = candidates.find(
+				(candidate) => candidate !== undefined && labelWidth(candidate, point.emphasis) <= room
+			);
 			const textWidth = text === undefined ? 0 : labelWidth(text, point.emphasis);
 			const visibleStart = Math.max(start, 0) + PERIOD_PADDING;
 			const visibleEnd = Math.min(end, width) - PERIOD_PADDING;

@@ -31,6 +31,7 @@ export type {
 	ChartAggregate,
 	ChartPoint,
 	Preset,
+	RulerMode,
 	TimeRange,
 	TimeRangeChange,
 	TimeRangeSliderLabelOverrides,

@@ -39,6 +39,13 @@ function setup(props: Partial<TimeRangeSliderProps> = {}) {
 }
 
 const slider = (name: string) => page.getByRole('slider', { name, exact: true });
+/** The period picker of narrow widths, and a choice in it. */
+const picker = () => page.getByRole('button', { name: /^Period: / });
+const periods = () => document.querySelector<HTMLElement>('.trs-periods')!;
+async function pick(name: string) {
+	await picker().click();
+	await page.getByRole('dialog').getByRole('button', { name, exact: true }).click();
+}
 const valueText = (name: string) => slider(name).element().getAttribute('aria-valuetext');
 const focus = (name: string) => (slider(name).element() as HTMLElement).focus();
 
@@ -156,20 +163,19 @@ describe('rendering', () => {
 
 	describe('narrow', () => {
 		const narrow = { style: 'width: 360px' };
-		const periodSelect = () => page.getByRole('combobox', { name: 'Period' });
 
-		it('shows the range text on the left and one dropdown on the right', async () => {
+		it('shows the range text on the left and one period picker on the right', async () => {
 			const { container } = setup(narrow);
-			await expect.element(periodSelect()).toBeVisible();
-			await expect.element(periodSelect()).toHaveValue('month');
-			// Preset, current-period and recent-period buttons all give way to the dropdown.
-			expect(page.getByRole('button').elements()).toHaveLength(0);
+			await expect.element(picker()).toBeVisible();
+			await expect.element(picker()).toHaveAccessibleName('Period: Month');
+			// Preset, current-period and recent-period buttons all give way to the picker.
+			expect(page.getByRole('button').elements()).toHaveLength(1);
 			const visible = [...container.querySelectorAll('.trs-toolbar > *')].filter(
 				(el) => getComputedStyle(el).display !== 'none'
 			);
 			expect(visible).toHaveLength(2);
 			const text = container.querySelector('.trs-range-text')!.getBoundingClientRect();
-			const select = periodSelect().element().getBoundingClientRect();
+			const select = picker().element().getBoundingClientRect();
 			const toolbar = container.querySelector('.trs-toolbar')!.getBoundingClientRect();
 			expect(text.left).toBeLessThan(select.left);
 			expect(Math.abs(toolbar.right - select.right)).toBeLessThan(2); // aligned right
@@ -178,25 +184,63 @@ describe('rendering', () => {
 			); // one line
 		});
 
-		it('groups periods, current periods and recent periods in the dropdown', async () => {
-			const { lastChange } = setup(narrow);
-			const select = periodSelect().element() as HTMLSelectElement;
-			expect([...select.querySelectorAll('optgroup')].map((group) => group.label)).toEqual([
-				'Period',
-				'Current',
-				'Recent'
+		it('lays out periods, current periods and recent periods in three columns', async () => {
+			const { container, lastChange } = setup(narrow);
+			await picker().click();
+			await expect.element(page.getByRole('dialog', { name: 'Period' })).toBeVisible();
+			const texts = (selector: string) =>
+				[...container.querySelectorAll(selector)].map((el) => el.textContent?.trim());
+			expect(texts('.trs-periods-heading')).toEqual(['Period', 'Current', 'Recent']);
+			// The Recent column names only the length; its buttons keep the full name.
+			expect(texts('.trs-period').filter((_, i) => i % 3 === 2)).toEqual([
+				'1 hour',
+				'24 hours',
+				'7 days',
+				'30 days',
+				'90 days',
+				'12 months'
 			]);
-			await periodSelect().selectOptions('this:day');
+			await expect
+				.element(page.getByRole('button', { name: 'Last 7 days' }))
+				.toHaveTextContent('7 days');
+			// The chosen period is pressed and focused.
+			const month = page.getByRole('button', { name: 'Month', exact: true });
+			await expect.element(month).toHaveAttribute('aria-pressed', 'true');
+			expect(document.activeElement).toBe(month.element());
+
+			await page.getByRole('button', { name: 'Today' }).click();
 			const [from, to, preset] = lastChange()!;
 			expect(preset).toBe('day');
 			expect(Date.parse(from!)).toBeLessThanOrEqual(Date.now());
 			expect(Date.parse(to!)).toBeGreaterThan(Date.now());
-			await expect.element(periodSelect()).toHaveValue('this:day');
+			await expect.element(picker()).toHaveAccessibleName('Period: Today');
+			expect(periods().matches(':popover-open')).toBe(false);
+			expect(document.activeElement).toBe(picker().element());
 		});
 
-		it('selects presets from the dropdown', async () => {
+		it('moves through the grid with the arrow keys', async () => {
+			setup(narrow);
+			await picker().click();
+			await userEvent.keyboard('{ArrowRight}');
+			expect(document.activeElement?.textContent?.trim()).toBe('This month');
+			await userEvent.keyboard('{ArrowDown}');
+			expect(document.activeElement?.textContent?.trim()).toBe('This quarter');
+			await userEvent.keyboard('{ArrowRight}');
+			expect(document.activeElement?.textContent?.trim()).toBe('90 days');
+		});
+
+		it('closes with Escape, leaving a collapsible ruler open', async () => {
+			setup({ ...narrow, ruler: 'toggle', expanded: true });
+			await picker().click();
+			expect(periods().matches(':popover-open')).toBe(true);
+			await userEvent.keyboard('{Escape}');
+			await expect.poll(() => periods().matches(':popover-open')).toBe(false);
+			await expect.element(slider('Start')).toBeVisible();
+		});
+
+		it('selects presets from the picker', async () => {
 			const { lastChange } = setup(narrow);
-			await periodSelect().selectOptions('week');
+			await pick('Week');
 			expect(lastChange()).toEqual([
 				'2025-04-14T00:00:00.000Z',
 				'2025-04-21T00:00:00.000Z',
@@ -210,10 +254,11 @@ describe('rendering', () => {
 				from: new Date(Date.UTC(2025, 3, 3)),
 				to: new Date(Date.UTC(2025, 3, 9))
 			});
-			await expect.element(periodSelect()).toHaveValue('');
-			expect((periodSelect().element() as HTMLSelectElement).selectedOptions[0]?.text).toBe(
-				'Custom'
-			);
+			await expect.element(picker()).toHaveAccessibleName('Period: Custom');
+			await expect.element(picker()).toHaveTextContent('Custom');
+			expect(picker().element().hasAttribute('data-active')).toBe(false);
+			await pick('Week');
+			expect(picker().element().hasAttribute('data-active')).toBe(true);
 		});
 	});
 
@@ -443,24 +488,34 @@ describe('pointer', () => {
 			.toEqual(['2025-08-01T00:00:00.000Z', '2025-09-01T00:00:00.000Z', 'month']);
 	});
 
-	it('shows the destination in the toolbar while the range animates', async () => {
-		const { track, oninput } = setup();
+	it('reports a jump at once and only animates the picture', async () => {
+		const { track, onchange, oninput, lastChange } = setup();
 		await ready(track);
 		const month = page.getByRole('button', { name: 'Month', exact: true }).element();
 		const text = () => track.closest('.trs')!.querySelector('.trs-range-text')!.textContent;
+		const left = () => track.querySelector<HTMLElement>('.trs-selection')!.style.left;
 		const x = clientX(track, Date.UTC(2025, 7, 15));
 		const y = track.getBoundingClientRect().top + 60;
 		pointer('pointerdown', track, x, y);
 		pointer('pointerup', track, x, y);
-		// Sample every frame of the animation: the range moves, the toolbar does not flicker.
+		// The destination arrives right away, before the first frame, so loading can start.
+		const august = ['2025-08-01T00:00:00.000Z', '2025-09-01T00:00:00.000Z', 'month'];
+		expect(onchange).toHaveBeenCalledTimes(1);
+		expect(lastChange()).toEqual(august);
+		expect(oninput.mock.calls.map(([change]) => iso(change))).toEqual([august]);
+		// Sample every frame of the animation: the selection moves, the toolbar does not flicker.
 		const seen = new Set<string>();
+		const positions = new Set<string>();
 		const until = performance.now() + 300;
 		while (performance.now() < until) {
 			await new Promise(requestAnimationFrame);
 			seen.add(`${month.getAttribute('aria-pressed')} ${text()}`);
+			positions.add(left());
 		}
 		expect([...seen]).toEqual(['true Aug 2025']);
-		expect(oninput.mock.calls.length).toBeGreaterThan(2); // in-between values were animated
+		expect(positions.size).toBeGreaterThan(2);
+		expect(onchange).toHaveBeenCalledTimes(1);
+		expect(oninput).toHaveBeenCalledTimes(1);
 	});
 
 	it('centers other ranges on a clicked place and snaps them to a tick', async () => {
@@ -622,23 +677,22 @@ describe('last … button', () => {
 		expect(Date.parse(end!)).toBeGreaterThan(Date.now() - 1000);
 	});
 
-	it('is offered in the dropdown on narrow widths', async () => {
+	it('is offered in the period picker on narrow widths', async () => {
 		const { lastChange } = setup({ style: 'width: 360px' });
-		const select = page.getByRole('combobox', { name: 'Period' });
-		await select.selectOptions('last:month');
+		await pick('Last 30 days');
 		const [from, to] = lastChange()!;
 		expect(Date.parse(to!) - Date.parse(from!)).toBe(30 * DAY);
-		await expect.element(select).toHaveValue('last:month');
-		// The button gives way to the dropdown.
+		await expect.element(picker()).toHaveAccessibleName('Period: Last 30 days');
+		// The button gives way to the picker.
 		expect(getComputedStyle(document.querySelector('.trs-rolling')!).display).toBe('none');
 	});
 });
 
-describe('collapsible', () => {
+describe('ruler mode', () => {
 	const disclosure = () => page.getByRole('button', { name: 'Apr 2025' });
 
 	it('shows only the toolbar until the range text is pressed', async () => {
-		const { container } = setup({ collapsible: true });
+		const { container } = setup({ ruler: 'popover' });
 		const ruler = container.querySelector<HTMLElement>('.trs-ruler')!;
 		await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'false');
 		expect(ruler.hidden).toBe(true);
@@ -649,23 +703,41 @@ describe('collapsible', () => {
 		await expect.element(slider('Start')).toBeVisible();
 	});
 
-	it('closes with Escape, returning focus to the range text', async () => {
-		setup({ collapsible: true, expanded: true });
-		await expect.element(slider('Start')).toBeVisible();
-		focus('Start');
-		await userEvent.keyboard('{Escape}');
-		await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'false');
-		expect(document.activeElement).toBe(disclosure().element());
-	});
+	it.each(['popover', 'toggle'] as const)(
+		'%s closes with Escape, returning focus to the range text',
+		async (ruler) => {
+			setup({ ruler, expanded: true });
+			await expect.element(slider('Start')).toBeVisible();
+			focus('Start');
+			await userEvent.keyboard('{Escape}');
+			await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'false');
+			expect(document.activeElement).toBe(disclosure().element());
+		}
+	);
 
-	it('closes on a press outside, but not inside', async () => {
-		const { container } = setup({ collapsible: true, expanded: true });
+	it('popover closes on a press outside, but not inside', async () => {
+		const { container } = setup({ ruler: 'popover', expanded: true });
 		await expect.element(slider('Start')).toBeVisible();
 		const inside = container.querySelector('.trs-toolbar')!;
 		inside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'true');
 		document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
 		await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'false');
+	});
+
+	it('toggle stays open on a press outside, and closes with the range text', async () => {
+		setup({ ruler: 'toggle' });
+		await disclosure().click();
+		await expect.element(slider('Start')).toBeVisible();
+		document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+		await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'true');
+		await disclosure().click();
+		await expect.element(disclosure()).toHaveAttribute('aria-expanded', 'false');
+	});
+
+	it('keeps the toolbar for its toggle, even with toolbar off', async () => {
+		setup({ ruler: 'toggle', toolbar: false });
+		await expect.element(disclosure()).toBeVisible();
 	});
 
 	it('is a plain, always open control by default', async () => {

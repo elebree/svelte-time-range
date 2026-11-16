@@ -6,6 +6,16 @@ export type { ChartAggregate, ChartPoint };
 
 export type { Preset, Weekday };
 
+/**
+ * When the ruler (and chart) shows:
+ * - `'always'`: always.
+ * - `'popover'`: only after the range text is pressed; Escape, a press outside or the range
+ *   text again hides it.
+ * - `'toggle'`: the range text shows and hides it, Escape hides it; it stays open while the
+ *   user works elsewhere, e.g. pans the map under it.
+ */
+export type RulerMode = 'always' | 'popover' | 'toggle';
+
 /** A half-open time range: `from` is included, `to` is not. */
 export interface TimeRange {
 	from: Date;
@@ -51,9 +61,9 @@ export interface TimeRangeSliderLabels {
 	customPreset: string;
 	/** Accessible name of the timeline. */
 	timeline: string;
-	/** Tooltip of the range text when it opens the ruler (`collapsible`). */
+	/** Tooltip of the range text when it opens the ruler (`ruler` other than `'always'`). */
 	showTimeline: string;
-	/** Tooltip of the range text when it closes the ruler (`collapsible`). */
+	/** Tooltip of the range text when it closes the ruler (`ruler` other than `'always'`). */
 	hideTimeline: string;
 	/** Accessible name of the start handle. */
 	start: string;
@@ -133,17 +143,25 @@ export interface TimeRangeSliderProps extends Omit<
 	/** What the values are, shown after them in the tooltip and to screen readers, e.g. "events". */
 	valueLabel?: string;
 	/**
-	 * Show only the toolbar until the range text is tapped, then the ruler (and chart) above it;
-	 * Escape or a press outside closes it again. Meant for small screens with the control over
-	 * a map or image: anchor it at the bottom so it grows upwards. Default `false`.
+	 * When the ruler (and chart) shows; see {@link RulerMode}. Other than `'always'`, the slider
+	 * is a compact card with just the toolbar (shown even with `toolbar={false}`), and the ruler
+	 * opens above it. Meant for small screens with the control over a map or image: anchor it
+	 * at the bottom so it grows upwards. Default `'always'`.
 	 */
-	collapsible?: boolean;
-	/** With `collapsible`: the ruler is open. Bindable. Default `false`. */
+	ruler?: RulerMode;
+	/** With `ruler` `'popover'` or `'toggle'`: the ruler is open. Bindable. Default `false`. */
 	expanded?: boolean;
 	/** Formats chart values. Default: `Intl.NumberFormat` in the `locale`. */
 	formatValue?: (value: number) => string;
-	/** Called after the user finishes a change: drag released (after snapping), key press, preset, double-click. */
+	/**
+	 * Called after the user finishes a change: drag released, click on the timeline, key press,
+	 * preset, double-click. It gets the final (snapped) value at once, without waiting for the
+	 * animation to end.
+	 */
 	onchange?: (change: TimeRangeChange) => void;
-	/** Called for every intermediate value while dragging or animating, and for every committed change. */
+	/**
+	 * Called for every intermediate value while dragging, and for every committed change. Animations
+	 * (snapping, a click on the timeline) only move the picture: the value jumps to where they end.
+	 */
 	oninput?: (change: TimeRangeChange) => void;
 }

@@ -52,22 +52,22 @@ The range is half-open: `from` is included, `to` is not, so April is `2025-04-01
 
 ### Props
 
-| Prop          | Default        | Description                                                                |
-| ------------- | -------------- | -------------------------------------------------------------------------- |
-| `from`, `to`  | current month  | The selected range (`Date`). Bindable.                                     |
-| `timeZone`    | runtime zone   | IANA zone for calendar math and labels, e.g. `'UTC'`.                      |
-| `locale`      | runtime locale | Dates, numbers, UI language and first day of the week.                     |
-| `min`, `max`  | –              | Limits of the timeline (`Date`).                                           |
-| `presets`     | all            | Preset buttons to show, e.g. `['day', 'week', 'month']`; `[]` hides them.  |
-| `toolbar`     | `true`         | Show the toolbar below the ruler.                                          |
-| `collapsible` | `false`        | Only the toolbar; the ruler opens on demand. Handy over a map on phones.   |
-| `disabled`    | `false`        |                                                                            |
-| `onchange`    | –              | After a finished interaction (drag released, key, button).                 |
-| `oninput`     | –              | On every intermediate value while dragging.                                |
-| `data`        | –              | `{ time, value? }[]` to draw as a chart. Without `value` a point counts 1. |
-| `chart`       | `'bar'`        | `'bar'` or `'line'`.                                                       |
-| `aggregate`   | `'sum'`        | `'sum'`, `'mean'`, `'min'` or `'max'` per bucket.                          |
-| `valueLabel`  | –              | Unit shown after values, e.g. `'events'`.                                  |
+| Prop         | Default        | Description                                                                                                                                                                              |
+| ------------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `from`, `to` | current month  | The selected range (`Date`). Bindable.                                                                                                                                                   |
+| `timeZone`   | runtime zone   | IANA zone for calendar math and labels, e.g. `'UTC'`.                                                                                                                                    |
+| `locale`     | runtime locale | Dates, numbers, UI language and first day of the week.                                                                                                                                   |
+| `min`, `max` | –              | Limits of the timeline (`Date`).                                                                                                                                                         |
+| `presets`    | all            | Preset buttons to show, e.g. `['day', 'week', 'month']`; `[]` hides them.                                                                                                                |
+| `toolbar`    | `true`         | Show the toolbar below the ruler.                                                                                                                                                        |
+| `ruler`      | `'always'`     | `'popover'` or `'toggle'`: only the toolbar, its range text opens the ruler. Handy over a map on phones. A popover closes on a press outside, a toggle stays open; both close on Escape. |
+| `disabled`   | `false`        |                                                                                                                                                                                          |
+| `onchange`   | –              | After a finished interaction (drag released, key, button).                                                                                                                               |
+| `oninput`    | –              | On every intermediate value while dragging.                                                                                                                                              |
+| `data`       | –              | `{ time, value? }[]` to draw as a chart. Without `value` a point counts 1.                                                                                                               |
+| `chart`      | `'bar'`        | `'bar'` or `'line'`.                                                                                                                                                                     |
+| `aggregate`  | `'sum'`        | `'sum'`, `'mean'`, `'min'` or `'max'` per bucket.                                                                                                                                        |
+| `valueLabel` | –              | Unit shown after values, e.g. `'events'`.                                                                                                                                                |
 
 Less common props (`weekStartsOn`, `step`, `minDuration`, `snapThreshold`, `minViewSpan`,
 `maxViewSpan`, `labels`, `formatRange`, `formatValue`, `expanded`) are documented in the
@@ -101,6 +101,23 @@ The slider follows the page's `color-scheme`. Adjust it with CSS custom properti
 Also available: `--trs-accent-contrast`, `--trs-text`, `--trs-muted`, `--trs-border`,
 `--trs-surface`, `--trs-track-background`, `--trs-tick`, `--trs-now`, `--trs-chart`,
 `--trs-chart-muted`, `--trs-radius`, `--trs-font-size`.
+
+With `ruler="popover"` or `"toggle"` the slider is a floating card. On phones, give the ruler
+the whole width by docking the card to the bottom edge:
+
+```css
+@media (max-width: 680px) {
+	.map-control {
+		inset: auto 0 0;
+		--trs-card-padding: 8px max(8px, env(safe-area-inset-right))
+			calc(8px + env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+		--trs-card-border-width: 1px 0 0;
+		--trs-card-radius: 12px 12px 0 0;
+	}
+}
+```
+
+A year then shows all 12 month names ("Jan", "Feb" …) on phones from about 390 px wide.
 
 ### Server-side rendering
 

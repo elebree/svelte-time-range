@@ -32,6 +32,7 @@
 		presetInterval,
 		rollingRange,
 		PRESETS,
+		ROLLING_WINDOWS,
 		snapTime,
 		stepBoundary,
 		type Interval,
@@ -80,7 +81,7 @@
 		aggregate = 'sum',
 		valueLabel,
 		formatValue,
-		collapsible = false,
+		ruler = 'always',
 		expanded = $bindable(false),
 		onchange,
 		oninput,
@@ -250,31 +251,22 @@
 	const fineInterval: Interval = $derived(axis?.minor ?? majorInterval);
 
 	/**
-	 * Where a running animation is taking the range. The toolbar shows this destination right
-	 * away, so the range text and the preset buttons do not flicker through the in-between values.
-	 */
-	let heading = $state<{ start: number; end: number } | null>(null);
-	const shownStart = $derived(heading?.start ?? start);
-	const shownEnd = $derived(heading?.end ?? end);
-	const shownPreset = $derived(matchPreset(zone, shownStart, shownEnd, firstDay));
-
-	/**
 	 * The Current button is pressed while the selection is a current period (this week, this
 	 * month …), however it got there, or after the button moved a custom range onto now. It
 	 * releases by itself once the selection or time moves on.
 	 */
 	const currentActive = $derived(
-		containsNow(shownStart, shownEnd, now) && (shownPreset !== null || followCurrent)
+		containsNow(start, end, now) && (activePreset !== null || followCurrent)
 	);
 
 	/** The kind of "last …" window the selection is ("last 7 days" → week), if any. */
-	const shownRolling = $derived(matchRolling(zone, shownStart, shownEnd));
+	const activeRolling = $derived(matchRolling(zone, start, end));
 	/**
 	 * The "last …" button is pressed while the selection is a "last …" window ending now; it
 	 * releases by itself once time moves on (the range itself stays put).
 	 */
 	const rollingActive = $derived(
-		shownRolling !== null && Math.abs(shownEnd - now) <= Math.max(precision, MINUTE) + NOW_INTERVAL
+		activeRolling !== null && Math.abs(end - now) <= Math.max(precision, MINUTE) + NOW_INTERVAL
 	);
 
 	type CurrentKind = Preset | 'range';
@@ -282,7 +274,7 @@
 	 * The kind of the selection, which labels the "this …" and "last …" buttons: a calendar
 	 * period, else a "last …" window (so "Last 7 days" pairs with "This week"), else 'range'.
 	 */
-	const currentKind: CurrentKind = $derived(shownPreset ?? shownRolling ?? 'range');
+	const currentKind: CurrentKind = $derived(activePreset ?? activeRolling ?? 'range');
 	/** All labels the button can show; it keeps the width of the longest so the toolbar never shifts. */
 	const currentKinds: CurrentKind[] = $derived([
 		...new Set<CurrentKind>([...presets, 'range', currentKind])
@@ -290,8 +282,8 @@
 
 	const rangeText = $derived(
 		formatRange
-			? formatRange(new Date(shownStart), new Date(shownEnd))
-			: formatRangeText(zone, shownStart, shownEnd, lang, text.quarterFormat)
+			? formatRange(new Date(start), new Date(end))
+			: formatRangeText(zone, start, end, lang, text.quarterFormat)
 	);
 
 	// ── Chart ────────────────────────────────────────────────────────────────────
@@ -331,9 +323,7 @@
 		formatValue ? formatValue(value) : compactFormat.format(value);
 
 	/** The aggregated value inside the selection, for screen readers. */
-	const selectionValue = $derived(
-		series ? aggregateRange(series, shownStart, shownEnd, aggregate) : null
-	);
+	const selectionValue = $derived(series ? aggregateRange(series, start, end, aggregate) : null);
 	const selectionText = $derived(
 		selectionValue === null ? rangeText : `${rangeText}, ${formatChartValue(selectionValue)}`
 	);
@@ -363,10 +353,17 @@
 		hoverX = series && event.pointerType !== 'touch' && !pointers.size ? localX(event) : null;
 	}
 
+	/**
+	 * Where the selection is drawn while an animation moves it. Only the picture moves: `from`,
+	 * `to` and `onchange` get the destination right away, so loading data can start at once and
+	 * nobody sees the in-between values.
+	 */
+	let drawn = $state<{ start: number; end: number } | null>(null);
+
 	/** Keeps far off-screen positions small; the track clips everything outside anyway. */
 	const onTrack = (x: number) => clamp(x, -64, width + 64);
-	const startX = $derived(onTrack(xAt(view, width, start)));
-	const endX = $derived(onTrack(xAt(view, width, end)));
+	const startX = $derived(onTrack(xAt(view, width, drawn?.start ?? start)));
+	const endX = $derived(onTrack(xAt(view, width, drawn?.end ?? end)));
 	const lowerX = $derived(
 		Number.isFinite(lowerBound) ? onTrack(xAt(view, width, lowerBound)) : -64
 	);
@@ -411,29 +408,28 @@
 
 	let animation: { frame: number; finish: () => void } | null = null;
 
-	function animateTo(target: Partial<Target>, done: () => void) {
+	/** Sets the range to `target` at once (without committing) and animates the picture there. */
+	function animateTo(target: Partial<Target>) {
 		finishAnimation();
 		const initial: Target = { start, end, center: view.center, span: view.span };
 		const goal: Target = { ...initial, ...target };
+		setRange(goal.start, goal.end);
+		const moveRange = goal.start !== initial.start || goal.end !== initial.end;
 		const moveView = goal.center !== initial.center || goal.span !== initial.span;
 		const apply = (k: number) => {
 			const lerp = (a: number, b: number) => (k >= 1 ? b : a + (b - a) * k);
-			setRange(lerp(initial.start, goal.start), lerp(initial.end, goal.end));
+			drawn =
+				moveRange && k < 1
+					? { start: lerp(initial.start, goal.start), end: lerp(initial.end, goal.end) }
+					: null;
 			if (moveView) {
 				view = { center: lerp(initial.center, goal.center), span: lerp(initial.span, goal.span) };
 			}
 		};
-		const finish = () => {
-			heading = null;
-			apply(1);
-			done();
-		};
+		const finish = () => apply(1);
 		if (prefersReducedMotion.current || typeof requestAnimationFrame !== 'function') {
 			finish();
 			return;
-		}
-		if (goal.start !== initial.start || goal.end !== initial.end) {
-			heading = { start: Math.round(goal.start), end: Math.round(goal.end) };
 		}
 		const startedAt = performance.now();
 		const frame = (timestamp: number) => {
@@ -452,7 +448,7 @@
 	function cancelAnimation() {
 		if (animation) cancelAnimationFrame(animation.frame);
 		animation = null;
-		heading = null;
+		drawn = null;
 	}
 
 	/** Jumps to the end of a running animation, so new input starts from its final state. */
@@ -716,8 +712,8 @@
 		const target: Partial<Target> = (snap && snapTarget(drag)) || {};
 		const shown = revealed(view, target.start ?? start, target.end ?? end);
 		if (shown !== view) Object.assign(target, shown);
-		if (Object.keys(target).length > 0) animateTo(target, commit);
-		else commit();
+		if (Object.keys(target).length > 0) animateTo(target);
+		commit();
 	}
 
 	/** Snapping distance in ms at the current zoom; 0 when snapping is off. */
@@ -760,7 +756,8 @@
 			[a, b] = snapRange(centered, centered + duration);
 		}
 		if (a === start && b === end) return;
-		animateTo({ start: a, end: b, ...revealed(view, a, b) }, commit);
+		animateTo({ start: a, end: b, ...revealed(view, a, b) });
+		commit();
 	}
 
 	/** Where the dragged part should snap to, or `null` if no tick is close enough. */
@@ -915,10 +912,12 @@
 		event.preventDefault();
 	}
 
-	// ── Collapsible (e.g. over a map on a phone) ─────────────────────────────────
+	// ── Collapsible ruler (e.g. over a map on a phone) ───────────────────────────
 
 	let root: HTMLDivElement | undefined = $state();
-	/** The ruler is shown: always, unless `collapsible` and closed. */
+	/** The range text opens and closes the ruler. */
+	const collapsible = $derived(ruler !== 'always');
+	/** The ruler is shown: always, unless collapsible and closed. */
 	const open = $derived(!collapsible || expanded);
 
 	function onrootkeydown(event: KeyboardEvent) {
@@ -927,9 +926,9 @@
 		root?.querySelector<HTMLElement>('.trs-disclosure')?.focus();
 	}
 
-	// Pressing anywhere outside the open control (on the map) closes it again.
+	// As a popover, pressing anywhere outside the open control (on the map) closes it again.
 	$effect(() => {
-		if (!collapsible || !open) return;
+		if (ruler !== 'popover' || !open) return;
 		return on(document, 'pointerdown', (event) => {
 			if (root && !root.contains(event.target as Node)) expanded = false;
 		});
@@ -1037,22 +1036,127 @@
 
 	/** The period dropdown's value: a preset, `last:<kind>` for a "last …" window, or ''. */
 	const selectValue = $derived(
-		rollingActive && shownRolling && presets.includes(shownRolling)
-			? `last:${shownRolling}`
-			: shownPreset !== null && presets.includes(shownPreset)
+		rollingActive && activeRolling && presets.includes(activeRolling)
+			? `last:${activeRolling}`
+			: activePreset !== null && presets.includes(activePreset)
 				? currentActive
-					? `this:${shownPreset}`
-					: shownPreset
+					? `this:${activePreset}`
+					: activePreset
 				: ''
 	);
 
-	/** The dropdown: `<kind>` a period, `this:<kind>` the current one, `last:<kind>` a window. */
+	/** A period choice: `<kind>` a period, `this:<kind>` the current one, `last:<kind>` a window. */
 	function onselectchange(value: string) {
 		if (value.startsWith('last:')) selectRolling(value.slice(5) as Preset);
 		else if (value.startsWith('this:')) {
 			followCurrent = true;
 			selectPreset(value.slice(5) as Preset, Date.now());
 		} else if (value) choosePreset(value as Preset, false);
+	}
+
+	// ── Period picker (narrow widths) ────────────────────────────────────────────
+
+	let periodsButton: HTMLButtonElement | undefined = $state();
+	let periodsPanel: HTMLDivElement | undefined = $state();
+
+	/** What the picker's button shows: the chosen period, or "Custom". */
+	const periodText = $derived.by(() => {
+		const [kind, preset] = selectValue.includes(':') ? selectValue.split(':') : ['', selectValue];
+		if (!preset) return text.customPreset;
+		if (kind === 'this') return text.current[preset as Preset];
+		if (kind === 'last') return text.rolling[preset as Preset];
+		return text.presets[preset as Preset];
+	});
+
+	/** The length of each "last …" window ("7 days"): the Recent column does not repeat "Last". */
+	const windowLengths = $derived(
+		Object.fromEntries(
+			PRESETS.map((preset) => {
+				const { unit, step } = ROLLING_WINDOWS[preset];
+				try {
+					const format = new Intl.NumberFormat(lang as string | string[] | undefined, {
+						style: 'unit',
+						unit,
+						unitDisplay: 'long'
+					});
+					return [preset, format.format(step)];
+				} catch {
+					return [preset, text.rolling[preset]];
+				}
+			})
+		) as Record<Preset, string>
+	);
+
+	/** The picker's rows: per period, the period around the selection, the current one, the last one. */
+	const periodRows = $derived(
+		presets.map((preset) => [
+			{ value: preset, text: text.presets[preset], label: text.presets[preset] },
+			{ value: `this:${preset}`, text: text.current[preset], label: text.current[preset] },
+			{ value: `last:${preset}`, text: windowLengths[preset], label: text.rolling[preset] }
+		])
+	);
+
+	/**
+	 * Opens next to its button: below it, or above where there is more room (a control at the
+	 * bottom of a map), aligned to its right edge and kept on screen. It sits in the top layer,
+	 * so containers with `overflow: hidden` do not clip it.
+	 */
+	function placePeriods(event: Event) {
+		if ((event as ToggleEvent).newState !== 'open' || !periodsButton || !periodsPanel) return;
+		const MARGIN = 8;
+		const GAP = 4;
+		const button = periodsButton.getBoundingClientRect();
+		const viewportWidth = document.documentElement.clientWidth;
+		const viewportHeight = window.innerHeight;
+		const above = button.top - GAP - MARGIN;
+		const below = viewportHeight - button.bottom - GAP - MARGIN;
+		const style = periodsPanel.style;
+		style.right = `${Math.max(MARGIN, viewportWidth - button.right)}px`;
+		style.maxWidth = `${viewportWidth - 2 * MARGIN}px`;
+		if (below >= above) {
+			style.top = `${button.bottom + GAP}px`;
+			style.bottom = '';
+			style.maxHeight = `${below}px`;
+		} else {
+			style.top = '';
+			style.bottom = `${viewportHeight - button.top + GAP}px`;
+			style.maxHeight = `${above}px`;
+		}
+	}
+
+	/** Focuses the chosen period once the picker is open. */
+	function onperiodstoggle(event: Event) {
+		if ((event as ToggleEvent).newState !== 'open') return;
+		const cells = periodsPanel?.querySelectorAll<HTMLElement>('.trs-period');
+		const chosen = periodsPanel?.querySelector<HTMLElement>('.trs-period[aria-pressed="true"]');
+		(chosen ?? cells?.[0])?.focus();
+	}
+
+	function choosePeriod(value: string) {
+		onselectchange(value);
+		periodsPanel?.hidePopover();
+		periodsButton?.focus();
+	}
+
+	/** Arrow keys move through the grid; Escape closes only the picker, not a collapsible ruler. */
+	function onperiodskeydown(event: KeyboardEvent) {
+		if (event.key === 'Escape') {
+			event.stopPropagation();
+			return;
+		}
+		const cells = [...(periodsPanel?.querySelectorAll<HTMLElement>('.trs-period') ?? [])];
+		const index = cells.indexOf(document.activeElement as HTMLElement);
+		if (index < 0) return;
+		const moves: Record<string, number> = {
+			ArrowLeft: -1,
+			ArrowRight: 1,
+			ArrowUp: -3,
+			ArrowDown: 3
+		};
+		const move = moves[event.key];
+		if (move === undefined) return;
+		event.preventDefault();
+		cells[index + move]?.focus();
 	}
 </script>
 
@@ -1095,8 +1199,8 @@
 					{width}
 					{height}
 					fontSize={FONT_SIZE}
-					highlightStart={dropPreview?.start ?? shownStart}
-					highlightEnd={dropPreview?.end ?? shownEnd}
+					highlightStart={dropPreview?.start ?? start}
+					highlightEnd={dropPreview?.end ?? end}
 					marks={dropPreview?.marks ?? []}
 				/>
 			{/if}
@@ -1197,7 +1301,8 @@
 		</div>
 	{/if}
 
-	{#if toolbar}
+	<!-- A collapsible ruler needs the toolbar: its range text is the toggle. -->
+	{#if toolbar || collapsible}
 		<div class="trs-toolbar">
 			{#if presets.length > 0}
 				<!-- Buttons where there is room, a dropdown on narrow widths (CSS container query). -->
@@ -1212,30 +1317,46 @@
 						>
 					{/each}
 				</div>
-				<select
-					class="trs-preset-select"
-					aria-label={text.presetGroup}
-					value={selectValue}
-					{disabled}
-					onchange={(event) => onselectchange(event.currentTarget.value)}
+				<!-- Narrow widths: one button opens every choice in a grid (Period · Current · Recent). -->
+				<button
+					bind:this={periodsButton}
+					type="button"
+					class="trs-period-picker"
+					data-active={selectValue !== '' || undefined}
+					aria-label="{text.presetGroup}: {periodText}"
+					aria-haspopup="dialog"
+					popovertarget="{uid}-periods"
+					{disabled}>{periodText}</button
 				>
-					<option value="" disabled>{text.customPreset}</option>
-					<optgroup label={text.presetGroup}>
-						{#each presets as preset (preset)}
-							<option value={preset}>{text.presets[preset]}</option>
+				<div
+					bind:this={periodsPanel}
+					id="{uid}-periods"
+					class="trs-periods"
+					popover="auto"
+					role="dialog"
+					tabindex="-1"
+					aria-label={text.presetGroup}
+					onbeforetoggle={placePeriods}
+					ontoggle={onperiodstoggle}
+					onkeydown={onperiodskeydown}
+				>
+					<div class="trs-periods-grid">
+						{#each [text.presetGroup, text.currentGroup, text.rollingGroup] as heading (heading)}
+							<span class="trs-periods-heading" aria-hidden="true">{heading}</span>
 						{/each}
-					</optgroup>
-					<optgroup label={text.currentGroup}>
-						{#each presets as preset (preset)}
-							<option value="this:{preset}">{text.current[preset]}</option>
+						{#each periodRows as row (row[0].value)}
+							{#each row as cell (cell.value)}
+								<button
+									type="button"
+									class="trs-period"
+									aria-label={cell.label === cell.text ? undefined : cell.label}
+									aria-pressed={selectValue === cell.value}
+									onclick={() => choosePeriod(cell.value)}>{cell.text}</button
+								>
+							{/each}
 						{/each}
-					</optgroup>
-					<optgroup label={text.rollingGroup}>
-						{#each presets as preset (preset)}
-							<option value="last:{preset}">{text.rolling[preset]}</option>
-						{/each}
-					</optgroup>
-				</select>
+					</div>
+				</div>
 			{/if}
 			{#if collapsible}
 				<!-- The range text opens and closes the ruler: the biggest target in the bar. -->
@@ -1311,7 +1432,8 @@
 		/* Public theme variables (all optional): --trs-accent, --trs-accent-contrast, --trs-text,
 		   --trs-muted, --trs-border, --trs-surface, --trs-track-background, --trs-selection,
 		   --trs-tick, --trs-now, --trs-chart, --trs-chart-muted, --trs-height, --trs-radius,
-		   --trs-font-size.
+		   --trs-font-size; for a collapsible ruler's card --trs-card-padding,
+		   --trs-card-border-width and --trs-card-radius.
 		   Defaults follow the page's color-scheme. */
 		--_accent: var(--trs-accent, light-dark(#2563eb, #60a5fa));
 		--_accent-contrast: var(--trs-accent-contrast, light-dark(#ffffff, #0b1220));
@@ -1371,9 +1493,11 @@
 
 	/* Collapsible: a floating card for use over a map or image. */
 	.trs[data-collapsible] {
-		padding: 8px;
+		padding: var(--trs-card-padding, 8px);
 		border: 1px solid var(--_border);
-		border-radius: 12px;
+		/* E.g. `1px 0 0` and `12px 12px 0 0` for a full-width sheet at the bottom of a phone. */
+		border-width: var(--trs-card-border-width, 1px);
+		border-radius: var(--trs-card-radius, 12px);
 		background: var(--_surface);
 		box-shadow: 0 4px 16px rgb(15 23 42 / 0.16);
 	}
@@ -1556,7 +1680,7 @@
 
 	/* Six presets in German or Russian still fit a phone-width component in one row. */
 	/* The period dropdown replaces the preset buttons on narrow widths. */
-	.trs-preset-select {
+	.trs-period-picker {
 		display: none;
 		min-height: 30px;
 		padding: 4px 26px 4px 10px;
@@ -1572,26 +1696,97 @@
 		color: inherit;
 		font: inherit;
 		line-height: 1.2;
+		text-align: start;
+		white-space: nowrap;
 		cursor: pointer;
 		appearance: none;
 	}
 
-	.trs-preset-select:hover:not(:disabled) {
+	/* Highlighted like the preset buttons while a predefined range is chosen, plain for "Custom". */
+	.trs-period-picker[data-active] {
+		border-color: var(--_accent);
+		background-color: var(--_accent);
+		color: var(--_accent-contrast);
+	}
+
+	.trs-period-picker:hover:not(:disabled, [data-active]) {
 		background-color: var(--_hover);
 	}
 
-	.trs-preset-select:focus-visible {
+	.trs-period-picker:focus-visible {
 		outline: 2px solid var(--_accent);
 		outline-offset: 1px;
 	}
 
-	.trs-preset-select:disabled {
+	.trs-period-picker:disabled {
 		cursor: default;
 	}
 
+	/* The picker's grid, in the top layer (placed by `placePeriods`). */
+	.trs-periods {
+		position: fixed;
+		inset: auto;
+		box-sizing: border-box;
+		margin: 0;
+		padding: 8px;
+		overflow: auto;
+		border: 1px solid var(--_border);
+		border-radius: 12px;
+		background: var(--_surface);
+		box-shadow: 0 8px 24px rgb(15 23 42 / 0.2);
+		color: var(--_text);
+		font-size: var(--trs-font-size, 13px);
+	}
+
+	.trs-periods-grid {
+		display: grid;
+		grid-template-columns: repeat(3, auto);
+		gap: 2px 4px;
+	}
+
+	.trs-periods-heading {
+		padding: 2px 10px 4px;
+		color: var(--_muted);
+		font-size: 0.85em;
+		font-weight: 600;
+	}
+
+	.trs-period {
+		min-height: 32px;
+		padding: 4px 10px;
+		border: 0;
+		border-radius: 8px;
+		background: transparent;
+		color: inherit;
+		font: inherit;
+		text-align: start;
+		cursor: pointer;
+	}
+
+	.trs-period:hover {
+		background: var(--_hover);
+	}
+
+	.trs-period:focus-visible {
+		outline: 2px solid var(--_accent);
+		outline-offset: -2px;
+	}
+
+	.trs-period[aria-pressed='true'] {
+		background: var(--_accent);
+		color: var(--_accent-contrast);
+		font-weight: 600;
+	}
+
+	/* The range text as the ruler's toggle matches the dropdown beside it. */
 	@media (pointer: coarse) {
-		.trs-preset-select {
+		.trs-period-picker,
+		.trs-disclosure {
 			min-height: 36px;
+		}
+
+		.trs-period {
+			min-height: 40px;
 		}
 	}
 
@@ -1603,7 +1798,7 @@
 			display: none;
 		}
 
-		.trs-preset-select {
+		.trs-period-picker {
 			display: block;
 		}
 
@@ -1639,13 +1834,13 @@
 			padding-inline: 4px;
 		}
 
-		.trs-preset-select {
+		.trs-period-picker {
 			flex: none;
 			margin-inline-start: auto;
 		}
 
 		/* "This …", "Last …" and zoom live in the dropdown (and the wheel / pinch / keys). */
-		.trs-toolbar:has(.trs-preset-select) .trs-actions {
+		.trs-toolbar:has(.trs-period-picker) .trs-actions {
 			display: none;
 		}
 	}

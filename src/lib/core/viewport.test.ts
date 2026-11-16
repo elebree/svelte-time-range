@@ -96,6 +96,19 @@ describe('fitView', () => {
 		expect(fitted.center).toBe((Date.UTC(2025, 0, 1) + Date.UTC(2026, 0, 1)) / 2);
 	});
 
+	it('shows an hour within its whole calendar day', () => {
+		const fitted = fitView(utc, Date.UTC(2025, 3, 1, 15), Date.UTC(2025, 3, 1, 16), 'hour', limits);
+		expect(fitted.center).toBe(Date.UTC(2025, 3, 1, 12));
+		expect(fitted.span).toBeCloseTo(DAY * (1 + 2 * YEAR_VIEW_PADDING), -1);
+	});
+
+	it('shows a year in the middle of five whole calendar years', () => {
+		const fitted = fitView(utc, Date.UTC(2025, 0, 1), Date.UTC(2026, 0, 1), 'year', limits);
+		const [first, last] = [Date.UTC(2023, 0, 1), Date.UTC(2028, 0, 1)];
+		expect(fitted.center).toBe((first + last) / 2);
+		expect(fitted.span).toBeCloseTo((last - first) * (1 + 2 * YEAR_VIEW_PADDING), -1);
+	});
+
 	it('uses the preset span for other presets', () => {
 		const fitted = fitView(utc, Date.UTC(2025, 3, 14), Date.UTC(2025, 3, 21), 'week', limits);
 		expect(fitted.span).toBe(PRESET_VIEW_SPAN.week);

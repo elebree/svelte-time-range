@@ -1,7 +1,14 @@
 import { devices, expect, test, type Page } from '@playwright/test';
 
-/** The main slider; the demo also has a collapsible one over a map. */
+/** The main slider; the demo also has one with a collapsible ruler over a map. */
 const main = (page: Page) => page.getByTestId('slider');
+
+/** The period picker of narrow widths, and a choice in it. */
+const picker = (page: Page) => main(page).getByRole('button', { name: /^Period: / });
+async function pickPeriod(page: Page, name: string) {
+	await picker(page).click();
+	await main(page).getByRole('dialog').getByRole('button', { name, exact: true }).click();
+}
 
 /** px per day in the initial view: the year 2025 plus 2 % padding on each side. */
 async function pxPerDay(page: Page) {
@@ -31,15 +38,15 @@ test.beforeEach(async ({ page }) => {
 
 test('dragging an edge snaps to the month boundary', async ({ page }) => {
 	await dragBy(page, 'End', 30.3 * (await pxPerDay(page)));
-	await expect(page.getByTestId('to')).toHaveText('2025-06-01T00:00:00.000Z');
-	await expect(page.getByTestId('from')).toHaveText('2025-04-01T00:00:00.000Z');
+	await expect(page.getByTestId('to')).toHaveAttribute('datetime', '2025-06-01T00:00:00.000Z');
+	await expect(page.getByTestId('from')).toHaveAttribute('datetime', '2025-04-01T00:00:00.000Z');
 	await expect(page.getByTestId('log').locator('li')).toHaveCount(1);
 });
 
 test('moving a month keeps it a calendar month', async ({ page }) => {
 	await dragBy(page, 'Selected range', -30.5 * (await pxPerDay(page)));
-	await expect(page.getByTestId('from')).toHaveText('2025-03-01T00:00:00.000Z');
-	await expect(page.getByTestId('to')).toHaveText('2025-04-01T00:00:00.000Z');
+	await expect(page.getByTestId('from')).toHaveAttribute('datetime', '2025-03-01T00:00:00.000Z');
+	await expect(page.getByTestId('to')).toHaveAttribute('datetime', '2025-04-01T00:00:00.000Z');
 	await expect(main(page).getByRole('button', { name: 'Month', exact: true })).toHaveAttribute(
 		'aria-pressed',
 		'true'
@@ -52,7 +59,7 @@ test('keyboard continues where the pointer left off', async ({ page }) => {
 	await expect(main(page).getByRole('slider', { name: 'Start' })).toBeFocused();
 	await page.keyboard.press('ArrowLeft');
 	// One minor tick back: quarter-months (1st, 8th, 15th, 22nd) in the year view.
-	await expect(page.getByTestId('from')).toHaveText('2025-03-22T00:00:00.000Z');
+	await expect(page.getByTestId('from')).toHaveAttribute('datetime', '2025-03-22T00:00:00.000Z');
 });
 
 test('dragging into the edge scrolls the timeline', async ({ page }) => {
@@ -68,7 +75,7 @@ test('dragging into the edge scrolls the timeline', async ({ page }) => {
 		)
 		.toBeGreaterThan(Date.UTC(2026, 1, 1));
 	await page.mouse.up();
-	await expect(page.getByTestId('to')).toHaveText(/^2026-/);
+	await expect(page.getByTestId('to')).toHaveAttribute('datetime', /^2026-/);
 	await expect(page.getByTestId('log').locator('li')).toHaveCount(1);
 });
 
@@ -101,7 +108,7 @@ test('Current moves the selection to the current month', async ({ page }) => {
 	const today = new Date();
 	const monthStart = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), 1));
 	await main(page).getByRole('button', { name: 'This month', exact: true }).click();
-	await expect(page.getByTestId('from')).toHaveText(monthStart.toISOString());
+	await expect(page.getByTestId('from')).toHaveAttribute('datetime', monthStart.toISOString());
 	await expect(main(page).locator('.trs-now')).toHaveCount(1);
 	await expect(main(page).getByRole('button', { name: 'Month', exact: true })).toHaveAttribute(
 		'aria-pressed',
@@ -114,8 +121,8 @@ test('a click on the timeline moves the month there', async ({ page }) => {
 	// The view starts 2 % of a year before 2025; mid-August is about 226 days later.
 	const x = track.x + 1 + (365 * 0.02 + 226) * (await pxPerDay(page));
 	await page.mouse.click(x, track.y + 60);
-	await expect(page.getByTestId('from')).toHaveText('2025-08-01T00:00:00.000Z');
-	await expect(page.getByTestId('to')).toHaveText('2025-09-01T00:00:00.000Z');
+	await expect(page.getByTestId('from')).toHaveAttribute('datetime', '2025-08-01T00:00:00.000Z');
+	await expect(page.getByTestId('to')).toHaveAttribute('datetime', '2025-09-01T00:00:00.000Z');
 });
 
 test('a narrow range is moved, not resized, by its lower part', async ({ page }) => {
@@ -133,8 +140,8 @@ test('a narrow range is moved, not resized, by its lower part', async ({ page })
 	await page.mouse.move(x + 120, y, { steps: 10 });
 	await page.mouse.up();
 	await expect(page.getByTestId('log').locator('li')).toHaveCount(2);
-	const from = Date.parse((await page.getByTestId('from').textContent())!);
-	const to = Date.parse((await page.getByTestId('to').textContent())!);
+	const from = Date.parse((await page.getByTestId('from').getAttribute('datetime'))!);
+	const to = Date.parse((await page.getByTestId('to').getAttribute('datetime'))!);
 	expect(to - from).toBe(86_400_000);
 	expect(from).toBeGreaterThan(Date.UTC(2025, 3, 16));
 });
@@ -143,8 +150,8 @@ test('time zone and locale change the calendar', async ({ page }) => {
 	await page.getByLabel('Time zone').selectOption('Europe/Berlin');
 	await page.getByLabel('Locale').selectOption('de-DE');
 	await main(page).getByRole('button', { name: 'Monat', exact: true }).click();
-	await expect(page.getByTestId('from')).toHaveText('2025-03-31T22:00:00.000Z');
-	await expect(page.getByTestId('to')).toHaveText('2025-04-30T22:00:00.000Z');
+	await expect(page.getByTestId('from')).toHaveAttribute('datetime', '2025-03-31T22:00:00.000Z');
+	await expect(page.getByTestId('to')).toHaveAttribute('datetime', '2025-04-30T22:00:00.000Z');
 	await expect(main(page).locator('.trs-range-text')).toHaveText('Apr. 2025');
 });
 
@@ -157,11 +164,42 @@ test.describe('on a phone', () => {
 		hasTouch: true
 	});
 
+	for (const width of [390, 412]) {
+		test(`a year shows all 12 month names at ${width} px`, async ({ page }) => {
+			await page.setViewportSize({ width, height: 860 });
+			const months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+			await expect(main(page).locator('.trs-axis-label')).toHaveText(months);
+			const overlay = page.getByTestId('overlay');
+			await overlay.locator('.trs-disclosure').scrollIntoViewIfNeeded();
+			await overlay.locator('.trs-disclosure').tap();
+			await expect(overlay.locator('.trs-axis-label')).toHaveText(months);
+		});
+	}
+
+	test.describe('in British English', () => {
+		test.use({ locale: 'en-GB' });
+
+		test('a year trims "Sept" rather than dropping the months at 375 px', async ({ page }) => {
+			await page.setViewportSize({ width: 375, height: 860 });
+			await page.goto('/');
+			const months = 'Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec'.split(' ');
+			await expect(main(page).locator('.trs-axis-label')).toHaveText(months);
+		});
+
+		test('an hour shows its whole day, labelled every 3 hours', async ({ page }) => {
+			await page.setViewportSize({ width: 390, height: 860 });
+			await page.goto('/');
+			await pickPeriod(page, 'Hour');
+			await expect(main(page).locator('.trs-axis-label')).toHaveText(
+				['03', '06', '09', '12', '15', '18', '21'].map((hour) => `${hour}:00`)
+			);
+		});
+	});
+
 	test('the toolbar is one row: range text on the left, one dropdown on the right', async ({
 		page
 	}) => {
-		const select = main(page).getByRole('combobox', { name: 'Period' });
-		await expect(select).toBeVisible();
+		await expect(picker(page)).toBeVisible();
 		await expect(main(page).getByRole('button', { name: 'Week', exact: true })).toBeHidden();
 		await expect(main(page).locator('.trs-actions')).toBeHidden();
 		// Touch screens zoom with a pinch, so there are no zoom buttons.
@@ -176,13 +214,30 @@ test.describe('on a phone', () => {
 			);
 		expect(Math.max(...boxes) - Math.min(...boxes)).toBeLessThan(2);
 
-		await select.selectOption('week');
-		await expect(page.getByTestId('from')).toHaveText('2025-04-13T00:00:00.000Z'); // en-US: Sunday
-		await expect(select).toHaveValue('week');
+		await pickPeriod(page, 'Week');
+		await expect(page.getByTestId('from')).toHaveAttribute('datetime', '2025-04-13T00:00:00.000Z'); // en-US: Sunday
+		await expect(picker(page)).toHaveAccessibleName('Period: Week');
 
-		await select.selectOption('this:month');
-		await expect(select).toHaveValue('this:month');
+		await pickPeriod(page, 'This month');
+		await expect(picker(page)).toHaveAccessibleName('Period: This month');
 		await expect(main(page).locator('.trs-range-text')).toHaveText(/\w{3} \d{4}/);
+	});
+
+	test('the period picker of the map overlay opens above it, on screen', async ({ page }) => {
+		const overlay = page.getByTestId('overlay');
+		const button = overlay.getByRole('button', { name: /^Period: / });
+		await button.scrollIntoViewIfNeeded();
+		await button.tap();
+		const dialog = overlay.getByRole('dialog');
+		await expect(dialog).toBeVisible();
+		const box = (await dialog.boundingBox())!;
+		const anchor = (await button.boundingBox())!;
+		expect(box.y + box.height).toBeLessThanOrEqual(anchor.y);
+		expect(box.x).toBeGreaterThanOrEqual(0);
+		expect(box.x + box.width).toBeLessThanOrEqual(page.viewportSize()!.width);
+		await dialog.getByRole('button', { name: 'Last 7 days' }).tap();
+		await expect(dialog).toBeHidden();
+		await expect(button).toHaveAccessibleName('Period: Last 7 days');
 	});
 
 	test('the map overlay opens from its bar and closes on a tap on the map', async ({ page }) => {

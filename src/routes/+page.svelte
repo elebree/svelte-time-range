@@ -1,5 +1,6 @@
 <script lang="ts">
 	/* eslint-disable svelte/no-navigation-without-resolve -- the only links are external */
+	import { onMount } from 'svelte';
 	import { TimeRangeSlider, type TimeRangeChange } from '#lib';
 	import { name, version, repository } from '../../package.json';
 
@@ -48,8 +49,9 @@
 	let chart: 'none' | 'bar' | 'line' = $state('bar');
 	let bounded = $state(false);
 	let disabled = $state(false);
+	let mapRuler: 'popover' | 'toggle' = $state('popover');
 	let theme: (typeof THEMES)[number] = $state('auto');
-	let log: { id: number; text: string }[] = $state([]);
+	let log: (TimeRangeChange & { id: number })[] = $state([]);
 	let slider: ReturnType<typeof TimeRangeSlider> | undefined = $state();
 
 	$effect(() => {
@@ -125,9 +127,49 @@
 
 	let nextId = 0;
 	function onchange({ from, to, preset }: TimeRangeChange) {
-		const text = `${from.toISOString()} → ${to.toISOString()}${preset ? ` (${preset})` : ''}`;
-		log = [{ id: nextId++, text }, ...log].slice(0, 6);
+		log = [{ id: nextId++, from, to, preset }, ...log].slice(0, 6);
 	}
+
+	/**
+	 * The first of the browser's preferred languages that the Locale option offers: an exact
+	 * match ("en-GB"), else the same language and script ("de" → "de-DE", "zh-HK" → "zh-TW").
+	 */
+	function preferredLocale(): string | undefined {
+		const key = (tag: string) => {
+			const { language, script } = new Intl.Locale(tag).maximize();
+			return `${language}-${script}`;
+		};
+		for (const tag of navigator.languages ?? [navigator.language]) {
+			try {
+				const exact = LOCALES.find(({ code }) => code.toLowerCase() === tag.toLowerCase());
+				const similar = LOCALES.find(({ code }) => key(code) === key(tag));
+				if (exact ?? similar) return (exact ?? similar)!.code;
+			} catch {
+				// Not a valid tag: try the next one.
+			}
+		}
+	}
+
+	/**
+	 * Value and log dates in the browser's own locale and the chosen time zone. The page is
+	 * prerendered in en-US; the browser's languages apply once it runs there.
+	 */
+	let hydrated = $state(false);
+	onMount(() => {
+		hydrated = true;
+		locale = preferredLocale() ?? locale;
+	});
+	const dateTime = $derived(
+		new Intl.DateTimeFormat(hydrated ? undefined : 'en-US', {
+			year: 'numeric',
+			month: 'short',
+			day: 'numeric',
+			hour: '2-digit',
+			minute: '2-digit',
+			timeZone,
+			timeZoneName: 'short'
+		})
+	);
 
 	/** The markup for the current options, to copy into an app. */
 	const code = $derived.by(() => {
@@ -165,6 +207,10 @@
 		content="A zoomable, time-zone aware time range slider for Svelte 5, with presets, snapping and an optional chart."
 	/>
 </svelte:head>
+
+{#snippet time(date: Date, testId?: string)}
+	<time datetime={date.toISOString()} data-testid={testId}>{dateTime.format(date)}</time>
+{/snippet}
 
 <main>
 	<header>
@@ -251,13 +297,19 @@
 				<h2>Value</h2>
 				<dl>
 					<dt>from</dt>
-					<dd data-testid="from">{from.toISOString()}</dd>
+					<dd>{@render time(from, 'from')}</dd>
 					<dt>to</dt>
-					<dd data-testid="to">{to.toISOString()}</dd>
+					<dd>{@render time(to, 'to')}</dd>
 				</dl>
 				<h2>onchange</h2>
 				<ol class="log" data-testid="log">
-					{#each log as entry (entry.id)}<li>{entry.text}</li>{/each}
+					{#each log as entry (entry.id)}
+						<li>
+							{@render time(entry.from)} → {@render time(entry.to)}{entry.preset
+								? ` (${entry.preset})`
+								: ''}
+						</li>
+					{/each}
 				</ol>
 				{#if !log.length}<p class="empty">Drag or click the slider</p>{/if}
 			</div>
@@ -276,9 +328,18 @@
 	<section class="card" aria-labelledby="map-title">
 		<h2 id="map-title">Over a map</h2>
 		<p class="help">
-			With <code>collapsible</code> the slider is a compact bar; tap the range text to open the ruler.
-			The dots are the incidents inside the selected range.
+			With <code>ruler="popover"</code> or <code>ruler="toggle"</code> the slider is a compact bar; tap
+			the range text to open the ruler. A popover closes on a tap on the map, a toggle stays open while
+			you pan. The dots are the incidents inside the selected range.
 		</p>
+		<div class="segmented map-mode" role="radiogroup" aria-label="Ruler">
+			{#each ['popover', 'toggle'] as const as option (option)}
+				<label class:active={mapRuler === option}>
+					<input type="radio" name="map-ruler" value={option} bind:group={mapRuler} />
+					{option[0].toUpperCase() + option.slice(1)}
+				</label>
+			{/each}
+		</div>
 		<div class="map">
 			<svg viewBox="0 0 1000 420" preserveAspectRatio="xMidYMid slice" aria-hidden="true">
 				<path class="water" d="M690 0h310v170c-60 30-120 10-170-30s-110-60-140-140z" />
@@ -303,7 +364,7 @@
 					data={chart === 'none' ? undefined : incidentTimes}
 					chart={chart === 'line' ? 'line' : 'bar'}
 					valueLabel="incidents"
-					collapsible
+					ruler={mapRuler}
 					data-testid="overlay"
 				/>
 			</div>
@@ -610,6 +671,10 @@
 		line-height: 1.5;
 	}
 
+	.map-mode {
+		margin-bottom: 12px;
+	}
+
 	.map {
 		position: relative;
 		height: 380px;
@@ -695,8 +760,24 @@
 			padding: 20px 10px;
 		}
 
+		/* Edge to edge, so the timeline gets nearly the whole screen width. */
 		.card {
-			padding: 12px;
+			margin-inline: -10px;
+			padding: 12px 8px;
+			border-inline-width: 0;
+			border-radius: 0;
+		}
+
+		.map {
+			margin-inline: -8px;
+			border-radius: 0;
+		}
+
+		/* A sheet docked to the bottom of the map. */
+		.map-control {
+			inset: auto 0 0;
+			--trs-card-border-width: 1px 0 0;
+			--trs-card-radius: 12px 12px 0 0;
 		}
 
 		.output {

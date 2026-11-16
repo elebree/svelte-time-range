@@ -2,7 +2,7 @@
  * The visible time window of the timeline and its mapping to pixels.
  */
 import { periodAt, type Preset, type Weekday } from './calendar.js';
-import { DAY, HOUR, YEAR, type Zone } from './time.js';
+import { DAY, YEAR, type Zone } from './time.js';
 
 export interface ViewWindow {
 	/** Instant at the horizontal center of the timeline (epoch ms). */
@@ -21,20 +21,23 @@ export interface ViewLimits {
 }
 
 /**
- * Visible duration after picking a preset. Months and quarters are shown within their calendar
- * year instead (see `fitView`); their entries here are only approximations.
+ * Visible duration after picking a preset. Hours are shown within their calendar day, months
+ * and quarters within their year, a year among its neighbours (see `fitView`); their entries
+ * here are only approximations.
  */
 export const PRESET_VIEW_SPAN: Readonly<Record<Preset, number>> = {
-	hour: 8 * HOUR,
+	hour: DAY,
 	day: 7 * DAY,
 	week: 35 * DAY,
 	month: YEAR,
 	quarter: YEAR,
-	year: 4 * YEAR
+	year: 5 * YEAR
 };
 
-/** Space on each side of the calendar year shown for a month or quarter, as a share of the year. */
+/** Space on each side of the calendar period shown around an hour, month, quarter or year, as a share of it. */
 export const YEAR_VIEW_PADDING = 0.02;
+/** A selected year is shown with this many calendar years on each side. */
+export const YEARS_AROUND = 2;
 /** A custom range takes this share of the view when it is fitted. */
 const FIT_RATIO = 0.25;
 /** Space kept between a revealed range and the edges of the view, as a share of the view. */
@@ -90,8 +93,20 @@ export function zoomView(
 }
 
 /**
- * The view for `[start, end)`: a month or quarter is shown within its calendar year, other
- * presets with their `PRESET_VIEW_SPAN`, custom ranges so they fill a quarter of the view.
+ * The calendar period shown around a preset: an hour in its day, a month or quarter in its
+ * year, a year in the middle of five.
+ */
+const CONTEXT: Partial<Record<Preset, { unit: Preset; around: number }>> = {
+	hour: { unit: 'day', around: 0 },
+	month: { unit: 'year', around: 0 },
+	quarter: { unit: 'year', around: 0 },
+	year: { unit: 'year', around: YEARS_AROUND }
+};
+
+/**
+ * The view for `[start, end)`: hours, months, quarters and years within their calendar context
+ * (see `CONTEXT`), weeks and days with their `PRESET_VIEW_SPAN`, custom ranges so they fill a
+ * quarter of the view.
  */
 export function fitView(
 	zone: Zone,
@@ -101,10 +116,15 @@ export function fitView(
 	limits: ViewLimits,
 	weekStartsOn: Weekday = 1
 ): ViewWindow {
-	if (preset === 'month' || preset === 'quarter') {
-		const [yearStart, yearEnd] = periodAt(zone, start, 'year', weekStartsOn);
-		const span = (yearEnd - yearStart) * (1 + 2 * YEAR_VIEW_PADDING);
-		return clampView({ center: (yearStart + yearEnd) / 2, span }, limits);
+	const context = preset && CONTEXT[preset];
+	if (context) {
+		let [first, last] = periodAt(zone, start, context.unit, weekStartsOn);
+		for (let i = 0; i < context.around; i++) {
+			first = periodAt(zone, first - 1, context.unit, weekStartsOn)[0];
+			last = periodAt(zone, last, context.unit, weekStartsOn)[1];
+		}
+		const span = (last - first) * (1 + 2 * YEAR_VIEW_PADDING);
+		return clampView({ center: (first + last) / 2, span }, limits);
 	}
 	const span = preset ? PRESET_VIEW_SPAN[preset] : (end - start) / FIT_RATIO;
 	return clampView({ center: (start + end) / 2, span }, limits);

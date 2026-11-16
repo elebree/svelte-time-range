@@ -28,6 +28,11 @@ export interface Tick {
 	readonly label: string;
 	/** Shorter label when `label` does not fit, e.g. "2025" for "Jan 2025" (between-tick labels). */
 	readonly compactLabel?: string;
+	/**
+	 * The period's name trimmed, for when even `compactLabel` does not fit it: "Sep" for "Sept",
+	 * "Jan" for a January too short for a bold "2025". The other periods keep their labels.
+	 */
+	readonly shortLabel?: string;
 	/** Shortest label, e.g. "J", used for all periods when compact labels do not fit everywhere. */
 	readonly narrowLabel?: string;
 	/** The tick starts a larger unit (a new day, month or year); its label shows that unit. */
@@ -81,11 +86,6 @@ export const TICK_INTERVALS: readonly TickInterval[] = [
 		['hour', 1],
 		['hour', 3]
 	]),
-	tickInterval('hour', 12, [
-		['hour', 1],
-		['hour', 3],
-		['hour', 6]
-	]),
 	tickInterval('day', 1, [
 		['hour', 1],
 		['hour', 3],
@@ -128,6 +128,7 @@ export const TICK_INTERVALS: readonly TickInterval[] = [
 
 type LabelStyle =
 	| 'time'
+	| 'trimmedMonth'
 	| 'dayOfMonth'
 	| 'dayMonth'
 	| 'dayMonthYear'
@@ -142,6 +143,8 @@ const STYLE_OPTIONS: Readonly<Record<LabelStyle, Intl.DateTimeFormatOptions>> = 
 	dayMonth: { day: 'numeric', month: 'short' },
 	dayMonthYear: { day: 'numeric', month: 'short', year: 'numeric' },
 	month: { month: 'short' },
+	// The short name trimmed (see `trimmedMonths`): "Sept" → "Sep".
+	trimmedMonth: { month: 'short' },
 	narrowMonth: { month: 'narrow' },
 	monthYear: { month: 'short', year: 'numeric' },
 	year: { year: 'numeric' }
@@ -149,16 +152,18 @@ const STYLE_OPTIONS: Readonly<Record<LabelStyle, Intl.DateTimeFormatOptions>> = 
 
 /**
  * Label styles that must fit for a unit; used to estimate label width. The fallbacks of
- * between-tick labels ("Jan 2025" → "2025" → "J", "Jan 1, 2025" → "Jan 1" → "Jan") are not
+ * between-tick labels ("Jan 2025" → "2025" → "Jan" → "J", "Jan 1, 2025" → "Jan 1" → "Jan") are not
  * included: they apply when there is less room.
  */
 const UNIT_STYLES: Readonly<Record<TimeUnit, readonly LabelStyle[]>> = {
 	minute: ['time', 'dayMonth'],
-	hour: ['time', 'dayMonth'],
+	// A wider date at midnight that would touch a neighbour hides it (see `TimeAxis`).
+	hour: ['time'],
 	// Days need room for day numbers only: full labels ("Apr 14") are used where they fit.
 	day: ['dayOfMonth'],
 	week: ['dayMonth'],
-	month: ['month'],
+	// Months fall back to trimmed ("Sep") and narrow ("S") names; see `MIN_SPACING`.
+	month: ['narrowMonth'],
 	year: ['year']
 };
 
@@ -166,6 +171,7 @@ interface LabelChoice {
 	style: LabelStyle;
 	emphasis: boolean;
 	compact?: LabelStyle;
+	short?: LabelStyle;
 	narrow?: LabelStyle;
 }
 
@@ -188,17 +194,35 @@ function labelStyle(unit: TimeUnit, p: WallClock): LabelChoice {
 			return { style: 'dayMonth', emphasis: false };
 		case 'month':
 			return p.month === 0
-				? { style: 'monthYear', emphasis: true, compact: 'year', narrow: 'narrowMonth' }
-				: { style: 'month', emphasis: false, narrow: 'narrowMonth' };
+				? {
+						style: 'monthYear',
+						emphasis: true,
+						compact: 'year',
+						short: 'trimmedMonth',
+						narrow: 'narrowMonth'
+					}
+				: { style: 'month', emphasis: false, short: 'trimmedMonth', narrow: 'narrowMonth' };
 		case 'year':
 			return { style: 'year', emphasis: false };
 	}
 }
 
-/** Average glyph width relative to the font size; slightly generous for proportional fonts. */
+/**
+ * Glyph widths relative to the font size, by kind; close to system UI fonts and Arial, slightly
+ * generous on average. Other glyphs (symbols, scripts without case) count as `GLYPH_WIDTH`.
+ */
 const GLYPH_WIDTH = 0.62;
+const WIDE_CAPITAL = /[MWÆŒМШЩЖЮФ]/;
+const WIDE_CAPITAL_WIDTH = 0.85;
+const CAPITAL_WIDTH = 0.65;
+const LOWERCASE_WIDTH = 0.55;
+const NARROW_LETTER = /[fijlrtI]/;
+const NARROW_LETTER_WIDTH = 0.32;
+const DIGIT_WIDTH = 0.56;
+const NARROW_GLYPH = /[\s:.,'’]/;
+const NARROW_GLYPH_WIDTH = 0.3;
 /** Minimum free space between labels on ticks, in px. */
-export const LABEL_GAP = 28;
+export const LABEL_GAP = 16;
 /** Minimum free space around a label between ticks, in px. */
 export const BETWEEN_LABEL_GAP = 6;
 /** Minor ticks closer than this are not drawn, in px. */
@@ -214,7 +238,16 @@ const WIDE_GLYPH_WIDTH = 1;
 /** Width of a text in ems, counting wide glyphs as wide. */
 function textEms(text: string): number {
 	let ems = 0;
-	for (const char of text) ems += WIDE_GLYPH.test(char) ? WIDE_GLYPH_WIDTH : GLYPH_WIDTH;
+	for (const char of text) {
+		if (WIDE_GLYPH.test(char)) ems += WIDE_GLYPH_WIDTH;
+		else if (char >= '0' && char <= '9') ems += DIGIT_WIDTH;
+		else if (NARROW_GLYPH.test(char)) ems += NARROW_GLYPH_WIDTH;
+		else if (NARROW_LETTER.test(char)) ems += NARROW_LETTER_WIDTH;
+		else if (WIDE_CAPITAL.test(char)) ems += WIDE_CAPITAL_WIDTH;
+		else if (char !== char.toLowerCase()) ems += CAPITAL_WIDTH;
+		else if (char !== char.toUpperCase()) ems += LOWERCASE_WIDTH;
+		else ems += GLYPH_WIDTH;
+	}
 	return ems;
 }
 
@@ -225,18 +258,54 @@ function textEms(text: string): number {
 export const estimateTextWidth = (text: string, fontSize: number): number =>
 	Math.ceil(textEms(text) * fontSize);
 
+/** A label in a style. */
+function formatLabel(locale: Locale, timeZone: string, style: LabelStyle, time: number): string {
+	const text = dateFormat(locale, timeZone, STYLE_OPTIONS[style]).format(time);
+	return style === 'trimmedMonth' ? (trimmedMonths(locale).get(text) ?? text) : text;
+}
+
+const trimmed = new Map<string, ReadonlyMap<string, string>>();
+
+/**
+ * Short month names cut to the fewest characters (at least 3) that keep all twelve apart, with
+ * a trailing period dropped: "Sept" → "Sep", but "juil." → "juil" next to "juin".
+ */
+function trimmedMonths(locale: Locale): ReadonlyMap<string, string> {
+	const key = String(locale ?? '');
+	let map = trimmed.get(key);
+	if (!map) {
+		const format = dateFormat(locale, 'UTC', STYLE_OPTIONS.month);
+		const names = Array.from({ length: 12 }, (_, month) =>
+			format.format(Date.UTC(2025, month, 15))
+		);
+		const bare = names.map((name) => [...name.replace(/\.$/, '')]);
+		const longest = Math.max(...bare.map((chars) => chars.length));
+		let cut = bare.map((chars) => chars.join(''));
+		for (let length = 3; length < longest; length++) {
+			const candidate = bare.map((chars) => chars.slice(0, length).join(''));
+			if (new Set(candidate).size === 12) {
+				cut = candidate;
+				break;
+			}
+		}
+		map = new Map(names.map((name, i) => [name, cut[i]!]));
+		trimmed.set(key, map);
+	}
+	return map;
+}
+
 const labelEms = new Map<string, number>();
 
-/** Width in ems of the widest label a unit can produce in the given locale. */
-function maxLabelEms(unit: TimeUnit, locale: Locale): number {
-	const key = `${String(locale ?? '')}|${unit}`;
+/** Width in ems of the widest label the styles can produce in the given locale. */
+function maxLabelEms(styles: readonly LabelStyle[], locale: Locale): number {
+	const key = `${String(locale ?? '')}|${styles.join()}`;
 	let ems = labelEms.get(key);
 	if (ems === undefined) {
 		ems = 0;
-		for (const style of UNIT_STYLES[unit]) {
-			const format = dateFormat(locale, 'UTC', STYLE_OPTIONS[style]);
+		for (const style of styles) {
 			for (let month = 0; month < 12; month++) {
-				ems = Math.max(ems, textEms(format.format(Date.UTC(2025, month, 28, 23, 59))));
+				const time = Date.UTC(2025, month, 28, 23, 59);
+				ems = Math.max(ems, textEms(formatLabel(locale, 'UTC', style, time)));
 			}
 		}
 		labelEms.set(key, ems);
@@ -246,7 +315,7 @@ function maxLabelEms(unit: TimeUnit, locale: Locale): number {
 
 /** Estimated width in px of the widest label of a unit. */
 export function labelWidth(unit: TimeUnit, locale: Locale, fontSize: number): number {
-	return Math.ceil(maxLabelEms(unit, locale) * fontSize);
+	return Math.ceil(maxLabelEms(UNIT_STYLES[unit], locale) * fontSize);
 }
 
 /** Distance in px two ticks of `interval` need so that their labels fit. */
@@ -259,7 +328,11 @@ export function requiredSpacing(interval: TickInterval, locale: Locale, fontSize
 }
 
 /** Lower limits for the tick spacing, in px: below 32 px per day, weeks read better than days. */
-const MIN_SPACING: Partial<Record<TimeUnit, number>> = { day: 32 };
+const MIN_SPACING: Partial<Record<TimeUnit, number>> = {
+	day: 32,
+	// Months as narrow as "J F M" still beat quarters or a lone year; below this they would crowd.
+	month: 26
+};
 
 /** The finest interval whose labels do not overlap at the given scale. */
 export function chooseInterval(msPerPx: number, locale: Locale, fontSize: number): TickInterval {
@@ -302,15 +375,15 @@ export function computeAxis({
 }: AxisOptions): Axis {
 	const msPerPx = (end - start) / width;
 	const interval = chooseInterval(msPerPx, locale, fontSize);
-	const format = (time: number, style: LabelStyle) =>
-		dateFormat(locale, zone.id, STYLE_OPTIONS[style]).format(time);
+	const format = (time: number, style: LabelStyle) => formatLabel(locale, zone.id, style, time);
 
 	const ticks = boundariesAround(zone, start, end, interval, weekStartsOn, 500).map((time) => {
-		const { style, emphasis, compact, narrow } = labelStyle(interval.unit, zone.parts(time));
+		const { style, emphasis, compact, short, narrow } = labelStyle(interval.unit, zone.parts(time));
 		const tick: Tick = { time, label: format(time, style), emphasis };
 		return {
 			...tick,
 			...(compact && { compactLabel: format(time, compact) }),
+			...(short && { shortLabel: format(time, short) }),
 			...(narrow && { narrowLabel: format(time, narrow) })
 		};
 	});

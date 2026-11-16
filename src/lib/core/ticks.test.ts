@@ -119,11 +119,32 @@ describe('computeAxis', () => {
 		expect(january).toMatchObject({
 			label: 'Jan 2025',
 			compactLabel: '2025',
+			shortLabel: 'Jan',
 			narrowLabel: 'J',
 			emphasis: true
 		});
 		const may = ticks.find((tick) => tick.time === Date.UTC(2025, 4, 1));
 		expect(may).toMatchObject({ label: 'May', narrowLabel: 'M', emphasis: false });
+	});
+
+	it.each([
+		['en-GB', 'Sept', 'Sep'],
+		['fr-FR', 'juil.', 'juil'],
+		['ru-RU', 'нояб.', 'ноя'],
+		['en-US', 'May', 'May']
+	])('trims month names in %s to stay distinct', (locale, label, short) => {
+		const { ticks } = computeAxis({
+			zone: utc,
+			start: Date.UTC(2025, 0, 1),
+			end: Date.UTC(2026, 0, 1),
+			width: 900,
+			locale
+		});
+		const month = { 'en-GB': 8, 'fr-FR': 6, 'ru-RU': 10, 'en-US': 4 }[locale]!;
+		expect(ticks.find((tick) => tick.time === Date.UTC(2025, month, 1))).toMatchObject({
+			label,
+			shortLabel: short
+		});
 	});
 
 	it('labels midnight with the date when showing hours', () => {
@@ -140,6 +161,20 @@ describe('computeAxis', () => {
 			emphasis: true
 		});
 		expect(plain(ticks.find((tick) => tick.time === midnight + HOUR)!.label)).toBe('1:00 AM');
+	});
+
+	it('labels every 3 hours of a whole day on a phone', () => {
+		const midnight = Date.UTC(2025, 6, 3);
+		const pad = DAY * 0.02;
+		const { interval, ticks } = computeAxis({
+			zone: utc,
+			start: midnight - pad,
+			end: midnight + DAY + pad,
+			width: 370,
+			locale: 'en-GB'
+		});
+		expect(interval).toMatchObject({ unit: 'hour', step: 3 });
+		expect(ticks.find((tick) => tick.time === midnight + 3 * HOUR)!.label).toBe('03:00');
 	});
 
 	it('covers the visible range', () => {
