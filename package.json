@@ -1,6 +1,6 @@
 {
 	"name": "svelte-time-range",
-	"version": "0.1.2",
+	"version": "0.2.0",
 	"description": "A zoomable, time-zone aware time range slider for Svelte 5 with presets, snapping and an optional chart",
 	"author": "elebree",
 	"license": "MIT",
